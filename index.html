@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Smart Cane Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <script type="module">
+        // --- ThingSpeak Config ---
+        let channelId = '';
+        let readApiKey = '';
+        let monitoringInterval;
+        let lastEntryId = -1; // To track the last processed entry
+
+        // --- DOM Elements ---
+        // Note: We will get these elements *after* the DOM is loaded.
+        let configScreen, dashboardScreen, startButton, channelIdInput, apiKeyInput;
+        let errorBox, latDisplay, lngDisplay, lastUpdateDisplay, sosStatusBox, sosStatusText, loader;
+
+        /**
+         * Fetches the latest data from ThingSpeak.
+         */
+        async function fetchFromThingSpeak() {
+            if (!channelId || !readApiKey) {
+                showError("Channel ID and API Key are required.");
+                return;
+            }
+            
+            loader.classList.remove('hidden'); // Show loader
+            const url = `https://api.thingspeak.com/channels/${channelId}/feeds/last.json?api_key=${readApiKey}`;
+
+            try {
+                const response = await fetch(url);
+                if (!response.ok) {
+                    if (response.status === 404) {
+                         console.warn("ThingSpeak channel returned 404. Is it populated with data?");
+                         showError("ThingSpeak channel is empty or not found (404).");
+                    } else {
+                        throw new Error(`ThingSpeak API error: ${response.status} ${response.statusText}`);
+                    }
+                }
+                const data = await response.json();
+
+                if (data && data.entry_id && data.entry_id !== lastEntryId) {
+                    lastEntryId = data.entry_id; // Mark this entry as processed
+                    
+                    const lat = parseFloat(data.field1 || 0).toFixed(6);
+                    const lng = parseFloat(data.field2 || 0).toFixed(6);
+                    const sos = parseInt(data.field3, 10) || 0;
+                    const timestamp = new Date(data.created_at || Date.now());
+
+                    // 1. Update the live UI
+                    updateLiveUI(lat, lng, sos, timestamp);
+
+                } else if (!data.entry_id) {
+                     console.log("ThingSpeak feed is empty.");
+                     showError("ThingSpeak channel is empty. Waiting for data...");
+                } else {
+                    console.log("No new data from ThingSpeak.");
+                }
+            } catch (err) {
+                console.error("Fetch Error:", err);
+                showError(`Error fetching data: ${err.message}`);
+            } finally {
+                loader.classList.add('hidden'); // Hide loader
+            }
+        }
+
+        /**
+         * Updates the live status panel.
+         */
+        function updateLiveUI(lat, lng, sos, timestamp) {
+            latDisplay.textContent = lat;
+            lngDisplay.textContent = lng;
+            lastUpdateDisplay.textContent = timestamp.toLocaleString();
+
+            if (sos === 1) {
+                sosStatusBox.className = 'p-6 rounded-lg shadow-lg bg-red-500 text-white animate-pulse';
+                sosStatusText.textContent = 'ALERT!';
+            } else {
+                sosStatusBox.className = 'p-6 rounded-lg shadow-lg bg-green-500 text-white';
+                sosStatusText.textContent = 'SAFE';
+            }
+        }
+
+        /**
+         * Shows an error message in the UI.
+         */
+        function showError(message) {
+            errorBox.textContent = message;
+            errorBox.classList.remove('hidden');
+        }
+
+        // --- Event Listeners ---
+        // We must wait for the DOM to be loaded before adding listeners
+        document.addEventListener('DOMContentLoaded', () => {
+            // Assign all DOM elements now that the page is loaded
+            configScreen = document.getElementById('config-screen');
+            dashboardScreen = document.getElementById('dashboard-screen');
+            startButton = document.getElementById('start-button');
+            channelIdInput = document.getElementById('channel-id');
+            apiKeyInput = document.getElementById('api-key');
+            errorBox = document.getElementById('error-box');
+            latDisplay = document.getElementById('lat-display');
+            lngDisplay = document.getElementById('lng-display');
+            lastUpdateDisplay = document.getElementById('last-update');
+            sosStatusBox = document.getElementById('sos-status-box');
+            sosStatusText = document.getElementById('sos-status-text');
+            loader = document.getElementById('loader');
+
+            startButton.addEventListener('click', () => {
+                channelId = channelIdInput.value;
+                readApiKey = apiKeyInput.value;
+
+                if (!channelId || !readApiKey) {
+                    showError("Please enter both Channel ID and Read API Key.");
+                    return;
+                }
+                
+                errorBox.classList.add('hidden'); // Hide errors
+                configScreen.classList.add('hidden');
+                dashboardScreen.classList.remove('hidden');
+
+                // Start monitoring
+                fetchFromThingSpeak(); // Fetch immediately
+                monitoringInterval = setInterval(fetchFromThingSpeak, 15000); // Then fetch every 15s
+            });
+        });
+    </script>
+
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        /* Simple spinner */
+        #loader {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #3498db;
+            border-radius: 50%;
+            width: 24px;
+            height: 24px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body class="bg-gray-100 min-h-screen">
+
+    <nav class="bg-white shadow-md">
+        <div class="max-w-6xl mx-auto px-4 py-4">
+            <h1 class="text-2xl font-bold text-gray-800">Smart Cane Dashboard</h1>
+        </div>
+    </nav>
+
+    <main class="max-w-6xl mx-auto p-4 mt-6">
+
+        <div id="error-box" class="hidden p-4 mb-4 text-sm text-red-700 bg-red-100 rounded-lg" role="alert">
+            </div>
+
+        <section id="config-screen" class="bg-white p-6 rounded-lg shadow-lg">
+            <h2 class="text-xl font-semibold mb-4">Setup Monitoring</h2>
+            <p class="text-gray-600 mb-4">Enter your ThingSpeak credentials to link your dashboard.</p>
+            
+            <div class="space-y-4">
+                <div>
+                    <label for="channel-id" class="block text-sm font-medium text-gray-700">ThingSpeak Channel ID</label>
+                    <input type="text" id="channel-id" class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500" placeholder="e.g., 1234567">
+                </div>
+                <div>
+                    <label for="api-key" class="block text-sm font-medium text-gray-700">ThingSpeak Read API Key</label>
+                    <input type="text" id="api-key" class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500" placeholder="e.g., YOUR_READ_API_KEY">
+                </div>
+                <button id="start-button" class="w-full bg-blue-600 text-white py-2 px-4 rounded-md font-semibold hover:bg-blue-700 transition duration-300">
+                    Start Monitoring
+                </button>
+            </div>
+        </section>
+
+        <section id="dashboard-screen" class="hidden">
+            
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+                <div id="sos-status-box" class="p-6 rounded-lg shadow-lg bg-gray-400 text-white">
+                    <div class="flex items-center justify-between">
+                        <h3 class="text-lg font-semibold">SOS Status</h3>
+                        <div id="loader" class="hidden"></div>
+                    </div>
+                    <p id="sos-status-text" class="text-4xl font-bold mt-2">Waiting...</p>
+                    <p class="text-sm opacity-80">Live from device</p>
+                </div>
+                
+                <div class="p-6 bg-white rounded-lg shadow-lg">
+                    <h3 class="text-lg font-semibold text-gray-800">Last Seen Location</h3>
+                    <p class="text-3xl font-bold text-blue-600 mt-2">
+                        <span id="lat-display">--.------</span>
+                    </p>
+                    <p class="text-3xl font-bold text-blue-600">
+                        <span id="lng-display">--.------</span>
+                    </p>
+                </div>
+
+                <div class="p-6 bg-white rounded-lg shadow-lg">
+                    <h3 class="text-lg font-semibold text-gray-800">Last Update</h3>
+                    <p id="last-update" class="text-2xl font-bold text-gray-600 mt-6">
+                        Waiting for data...
+                    </D>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div class="bg-gray-50 p-6 rounded-lg shadow-lg">
+                    <h3 class="text-xl font-semibold text-gray-800 mb-4">Location History (Demo)</h3>
+                    <ul class="max-h-96 overflow-y-auto space-y-2">
+                        <li class="text-gray-500">Live data is not saved in this demo.</li>
+                    </ul>
+                </div>
+
+                <div class="bg-red-50 p-6 rounded-lg shadow-lg">
+                    <h3 class="text-xl font-semibold text-red-800 mb-4">SOS Alert History (Demo)</h3>
+                    <ul class="max-h-96 overflow-y-auto space-y-2">
+                         <li class="text-gray-500">Live data is not saved in this demo.</li>
+                    </ul>
+                </div>
+            </div>
+
+        </section>
+
+    </main>
+</body>
+</html>
